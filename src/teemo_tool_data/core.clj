@@ -5,6 +5,8 @@
          '[clj-http.client :as client]
          '[clojure.data.json :as json]
          '[clojure.java.jdbc :as sql]
+         '[clojure.core.async :as async] ; necessary for throttler
+         '[throttler.core :refer [throttle-fn]]
          '[taoensso.timbre :as timbre
            :refer [log  trace  debug  info  warn  error  fatal  report
                    logf tracef debugf infof warnf errorf fatalf reportf
@@ -31,21 +33,30 @@
 ;(info "test")
 
 (defn riot-get
-  [querypath args]
-  (trace "riot-get " (get-env))
+  [querypath args & {:keys [backoffwait backoffcount]
+                     :or {backoffwait 1000
+                          backoffcount 0}}]
   (debug "riot-get " (get-env))
+   (if (> backoffcount 6)
+     (throw (Exception. "riot get max backoff retry reached")))
   (try+
    (client/get querypath args)
    (catch [:status 429] {:keys [request-time headers body]}
      (warn "got 429 for call    "    "  headers: " headers "    body: " body "waiting: " (get headers "Retry-After"))
      (Thread/sleep (* 1000 (read-string (get headers "Retry-After"))))
      (info "trying again")
-     (client/get querypath args)
+     (riot-get querypath args :backoffwait backoffwait :backoffcount (+ backoffcount 1))
      )
    (catch [:status 504] {:keys [request-time headers body]}
-     (warn "got 504 for call: " (get-env) "    waiting 1s")
-     (Thread/sleep 1000)
-     (client/get querypath args))
+     (warn "got 504 for call: " "    waiting " backoffwait "ms")
+     (Thread/sleep backoffwait)
+     (info "backoff wait finished, retrying")
+     (riot-get querypath args :backoffwait (* backoffwait 2) :backoffcount (+ backoffcount 1))
+     )
+   (catch [:status 404] {:keys [request-time headers body]}
+     (warn "got 404 for call: " querypath args)
+     (throw+)
+     )
   ))
 
 ;(while true (get-account-id-from-summoner-name "eternal delta" "na1"))
@@ -89,34 +100,42 @@
 (def whatismymmr-region-mapping {"na1" "na"
                                  "la1" ""})
 
-(defn get-mmr-for-summoner
+(def get-mmr-json-for-summoner
+  (throttle-fn
+(fn
   ; region is different, see the docs
   ; https://dev.whatismymmr.com/
   [summoner-name region]
-  (trace "get-mmr-for-summoner" (get-env))
   (debug "get-mmr-for-summoner" (get-env))
   (let [query (str "https://" (get whatismymmr-region-mapping (clojure.string/lower-case region)) ".whatismymmr.com/api/v1/summoner")]
     (try+
+     (get
       (client/get query
                   {:accept :json
                    :query-params {"name" summoner-name}})
+      :body
+      )
       (catch [:status 404] {:keys [request-time headers body]}
-        (prn "404 looking for mmr for summoner " region " " summoner-name)
-        nil)
-      (catch Object _ (throw+))
+        (warn "404 looking for summoner mmr " region " " summoner-name)
+        (throw+))
     )
     )
   )
+60
+:minute
+))
+
 
 ;(get-account-id-from-summoner-name "eternal delta" "na1")
 ;(get-summoner-name-from-account-id (get-account-id-from-summoner-name "eternal delta" "na1") "na1")
 
-;(get-mmr-for-summoner "eternal delta" "na1")
+; (get-mmr-json-for-summoner "eternal delta" "na1")
 
 (defn get-current-match-for-summoner
   [summoner-name region]
   (trace "get-current-match-for-summoner" (get-env))
-  (let [summonerid (get-summoner-id-from-account-id (get-account-id-from-summoner-name summoner-name region) region)
+  (let [accountid (get-account-id-from-summoner-name summoner-name region)
+        summonerid (get-summoner-id-from-account-id accountid region)
         query (str (format base-api-format region) "spectator/v4/active-games/by-summoner/" summonerid)]
     (prn query)
     (json/read-str (get (riot-get query
@@ -149,7 +168,7 @@
 (defn get-and-insert-mmr-by-summoner-name
   [db summoner-name region]
   (trace "get-and-insert-mmr-by-summoner-name" (get-env))
-  (let [mmr-data (get-mmr-for-summoner summoner-name region)
+  (let [mmr-data (get-mmr-json-for-summoner summoner-name region)
         account-id (get-account-id-from-summoner-name summoner-name region)]
     (if (not (= mmr-data nil))
     (sql/execute! db ["INSERT INTO mmr (accountId, region, type, data)
@@ -157,7 +176,8 @@
                       " account-id region 0 mmr-data])
     mmr-data
     )
-    ))
+    )
+  )
 
 (defn insert-mmr-data-for-match-participants
   [db match-data is-ongoing]
@@ -166,12 +186,19 @@
                          (map (fn [current-participant-data] (get current-participant-data "summonerName"))
                               (get match-data "participants"))
                          (map (fn [participant-identity] (get (get participant-identity "player") "summonerName"))
-                              (get match-data "participantIdentities")))]
+                              (get match-data "participantIdentities")))
+        region (get match-data "platformId")]
     (debug "names" summoner-names)
   (map (fn [summoner-name]
+         (try+
          (get-and-insert-mmr-by-summoner-name db
                                               summoner-name
-                                              (get match-data "platformId")))
+                                              region)
+             (catch [:status 404] {:keys [request-time headers body]}
+               (warn "got 404 for mmr get and insert: " summoner-name region headers body)
+               :error404
+               )
+             ))
        summoner-names)))
 
 (defn do-stream-match-get-and-inserts
@@ -192,7 +219,7 @@
 
 (defn get-match-history-for-account-id
   [account-id region]
-  (trace "get-match-history-for-account-id" (get-env))
+  (infof "getting match history for account id: %s in region: %s" account-id region)
   (let [query (str (format base-api-format region) "match/v4/matchlists/by-account/" account-id)]
     (json/read-str (get (riot-get query
                                     {:headers {"X-Riot-Token" (get-riot-api-key)}
@@ -237,7 +264,7 @@
 ; (do-stream-match-get-and-inserts db "darkprinc3" "na1")
 
 (def my-account-id (get-account-id-from-summoner-name "eternal delta" "na1"))
-;(do-account-match-history-get-and-inserts db my-account-id "na1")
+(do-account-match-history-get-and-inserts db my-account-id "na1")
 
 
 (def db

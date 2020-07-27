@@ -8,6 +8,8 @@
                  [org.clojure/java.jdbc "0.7.11"]
                  [org.xerial/sqlite-jdbc "3.32.3"]
                  [com.taoensso/timbre "4.10.0"]
+                 [org.clojure/core.async "1.3.610"] ; necessary for throttler imports to work
+                 [throttler "1.0.0"]
                  [clj-http "3.10.1"]]
   :main ^:skip-aot teemo-tool-data.core
   :target-path "target/%s"
