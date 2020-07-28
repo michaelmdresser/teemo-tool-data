@@ -107,10 +107,12 @@
 
 (defn add-job-to-summoner-queue
   ; summoner-json should be a summonerdto json
-  [db summoner-json]
+  [db summoner-json region]
   (sql/insert! db
                :summoner_data_job_queue
-               {:summoner_json summoner-json :status "READY"}))
+               {:summoner_json summoner-json
+                :region region
+                :status "READY"}))
 
  ; (add-job-to-summoner-queue db "testdata123")
 

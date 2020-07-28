@@ -59,6 +59,14 @@
                     :accept :json})
          :body)))
 
+(defn get-summoner-json-from-account-id
+  [account-id region]
+  (trace "get-summoner-json-from-account-id" (get-env))
+  (let [query (str (format base-api-format region) "summoner/v4/summoners/by-account/" account-id)]
+    (get (riot-get query
+                   {:headers {"X-Riot-Token" (get-riot-api-key)}
+                    :accept :json})
+         :body)))
 
 
 (defn get-account-id-from-summoner-name
