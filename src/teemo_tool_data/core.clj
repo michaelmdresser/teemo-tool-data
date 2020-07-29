@@ -97,11 +97,17 @@
             (catch Object e
               (error "non-403 during summ-to-mmr transduce: " e " failing on table " job-table " id " job-id)
               (throw+)))
-           (Thread/sleep 5000)))
+           (do
+             (info "summ-to-mmr loop has no jobs, waiting")
+             (Thread/sleep 5000))))
        (catch org.sqlite.SQLiteException e
                                         ; probably a lock held
          (error "sqlite exception " e)
-         (Thread/sleep 1000))))))
+         (if (clojure.string/includes? (.getMessage e) "SQLITE_BUSY")
+           (do
+             (debug "SQLITE BUSY, waiting")
+             (Thread/sleep 1000))
+           (throw+)))))))
 
 
 
@@ -125,11 +131,18 @@
              (error "non-403 during mmr-to-match transduce: " e " failing on table " job-table " id " job-id)
              (throw+)
              (app-db/fail-job db job-table job-id)))
-          (Thread/sleep 5000)))
+          (do
+            (info "mmr-to-match loop has no jobs, waiting")
+            (Thread/sleep 5000))))
       (catch org.sqlite.SQLiteException e
-        ; probably a lock held
+                                        ; probably a lock held
         (error "sqlite exception " e)
-        (Thread/sleep 1000))))))
+        (if (clojure.string/includes? (.getMessage e) "SQLITE_BUSY")
+          (do
+            (debug "SQLITE BUSY, waiting")
+            (Thread/sleep 1000))
+          (throw+)))))))
+
 
 (defn main-loop-match-to-summ
   [db]
@@ -152,11 +165,17 @@
                (app-db/fail-job db job-table job-id))
             (catch Object e
               (throw+)))
-           (Thread/sleep 5000)))
+           (do
+             (info "match-to-summ loop has no jobs, waiting")
+             (Thread/sleep 5000))))
        (catch org.sqlite.SQLiteException e
                                         ; probably a lock held
          (error "sqlite exception " e)
-         (Thread/sleep 1000))))))
+         (if (clojure.string/includes? (.getMessage e) "SQLITE_BUSY")
+           (do
+             (debug "SQLITE BUSY, waiting")
+             (Thread/sleep 1000))
+           (throw+)))))))
 
 
 (defn -main
