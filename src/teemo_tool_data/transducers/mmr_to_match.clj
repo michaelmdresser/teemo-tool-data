@@ -1,6 +1,7 @@
 (ns teemo-tool-data.transducers.mmr-to-match
   (:require [teemo-tool-data.db :as app-db]
             [teemo-tool-data.riot :as riot]
+            [teemo-tool-data.mmr :as mmr]
             [teemo-tool-data.transducers.util :refer [mark-done-step
                                                       dropall]]
             [taoensso.timbre :as timbre
@@ -16,6 +17,7 @@
 (defn normal-mmr-under?
   ; {:job-id ? :mmr-json ? :summoner-json ? :region ?}
   [threshold data]
+  (trace data)
   (as-> data v
     (get v :mmr-json)
     (json/read-str v)
@@ -24,6 +26,21 @@
     ((fn [avg-mmr] (if (= avg-mmr nil)
                      false
                      (< avg-mmr threshold))) v)))
+
+(defn ranked-mmr-under?
+  ; {:job-id ? :mmr-json ? :summoner-json ? :region ?}
+  [threshold data]
+  (trace data)
+  (as-> data v
+    (get v :mmr-json)
+    (json/read-str v)
+    (get v "ranked")
+    (get v "avg")
+    ((fn [avg-mmr] (if (= avg-mmr nil)
+                     false
+                     (< avg-mmr threshold))) v)))
+
+
 
 (defn match-history-step
   ;{ :job-id ? :mmr-json ? :summoner-json ? :region ?}
@@ -83,8 +100,10 @@
 
 (defn make-mmr-to-match-transducer
   [db]
+  ; {:job-id ? :mmr-json ? :summoner-json ? :region ?}
   (comp
-   (filter (partial normal-mmr-under? 600))
+   (filter (fn [data] (or (normal-mmr-under? 650 data)
+                          (ranked-mmr-under? 650 data))))
    ; mapcat turns the list of match id data into individual items in the transducer (1 summoner info -> many matches)
    ; https://stackoverflow.com/questions/59174994/how-to-create-multiple-outputs-using-a-transducer-on-a-pipeline
    (mapcat match-history-step)
@@ -106,3 +125,38 @@
 
 ;(async/<!! mmr-to-match-channel)
 
+(defn get-and-start-mmr-to-match-job
+  [db cn]
+  (app-db/update-job-queue-for-timed-out db "mmr_data_job_queue")
+  (let [job-id (app-db/get-job-from-job-queue db "mmr_data_job_queue")
+        query-response (sql/query db ["SELECT *
+                                       FROM mmr_data_job_queue
+                                       WHERE id = ?" job-id])
+        query-row (first query-response)
+        mmr-id (get query-row :mmr_id)
+        mmr-response (sql/query db ["SELECT *
+                                     FROM mmr
+                                     WHERE id = ?" mmr-id])
+        mmr-row (first mmr-response)]
+    (if (not (nil? job-id))
+    (async/>!! cn {:job-id job-id
+                   :region (get mmr-row :region)
+                   :summoner-json (get mmr-row :summoner_json)
+                   :mmr-json (get mmr-row :mmr_json)})
+    :errnojob)))
+
+(defn manual-create-mmr-job-by-summoner-name
+  [db summoner-name region]
+  ; TODO maybe use the insert summoner data mmr step
+  (let [summoner-json (riot/get-summoner-json-from-summoner-name summoner-name region)
+        mmr-json (mmr/get-mmr-json-for-summoner summoner-name region)
+        insert-response (sql/insert! db
+                                     :mmr
+                                     {:summoner_json summoner-json
+                                      :region region
+                                      :mmr_json mmr-json
+                                      :type 0 ; corresponds to current mmr provider
+                                      })
+        mmr-id (get (first insert-response) (keyword "last_insert_rowid()"))]
+    (app-db/add-job-to-mmr-queue db mmr-id)
+    ))

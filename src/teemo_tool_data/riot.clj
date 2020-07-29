@@ -27,19 +27,19 @@
   [querypath args & {:keys [backoffwait backoffcount]
                      :or {backoffwait 1000
                           backoffcount 0}}]
-  (debug "riot-get " (get-env))
+  (trace "riot-get " (get-env))
    (if (> backoffcount 6)
      (throw (Exception. "riot get max backoff retry reached")))
   (try+
    (client/get querypath args)
    (catch [:status 429] {:keys [request-time headers body]}
-     (warn "got 429 for call    "    "  headers: " headers "    body: " body "waiting: " (get headers "Retry-After"))
+     (warn "got 429 for call   querypath " querypath "  headers: " headers "    body: " body "waiting: " (get headers "Retry-After"))
      (Thread/sleep (* 1000 (read-string (get headers "Retry-After"))))
      (info "trying again")
      (riot-get querypath args :backoffwait backoffwait :backoffcount (+ backoffcount 1))
      )
    (catch [:status 504] {:keys [request-time headers body]}
-     (warn "got 504 for call: " "    waiting " backoffwait "ms")
+     (warn "got 504 for call:  querypath " querypath "    waiting " backoffwait "ms")
      (Thread/sleep backoffwait)
      (info "backoff wait finished, retrying")
      (riot-get querypath args :backoffwait (* backoffwait 2) :backoffcount (+ backoffcount 1))

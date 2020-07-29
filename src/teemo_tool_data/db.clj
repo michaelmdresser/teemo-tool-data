@@ -31,7 +31,7 @@
 
 (defn set-job-inprogress
   [t-con queue-table job-id]
-  (trace "setting job in progress for table " queue-table " and id " job-id)
+  (debug "setting job in progress for table " queue-table " and id " job-id)
   (sql/execute! t-con [(str "UPDATE " queue-table " SET
                          status = ?,
                          timeout = DATETIME(CURRENT_TIMESTAMP, '+10 minutes'),
@@ -95,6 +95,7 @@
 
 (defn finish-job-from-queue
   [db queue-table job-id]
+  (debug "marking job done for table " queue-table " and id " job-id)
   (sql/execute! db [(str "UPDATE " queue-table " SET
                      status = ?,
                      updated = CURRENT_TIMESTAMP,

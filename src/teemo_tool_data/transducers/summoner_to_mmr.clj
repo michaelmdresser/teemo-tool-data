@@ -13,6 +13,22 @@
             [clojure.data.json :as json]
             ))
 
+(defn predicate-recently-updated?
+  ; {:summoner-json ? :region ? :job-id ?}
+  [db data]
+  (let [summoner-data (json/read-str (get data :summoner-json))
+        region (get data :region)
+        account-id (get summoner-data "accountId")
+        query-response (sql/query db ["SELECT COUNT(*) FROM mmr
+WHERE JSON_EXTRACT(summoner_json, '$.accountId') = ?
+AND   timestamp > DATETIME(CURRENT_TIMESTAMP, '-7 days')" account-id])
+        count-recent (get (first query-response) (keyword "count(*)"))
+        recently-updated (> count-recent 0)]
+    (when recently-updated
+      (app-db/finish-job-from-queue db
+                                    "summoner_data_job_queue"
+                                    (get data :job-id)))
+    recently-updated))
 
 (defn enrich-summoner-data-with-mmr
   ; {:summoner-json ? :region ? :job-id ?}
@@ -57,6 +73,7 @@
   [db]
   ; {:summoner-json ? :region ? :job-id ?}
   (comp
+   (filter #(not (predicate-recently-updated? db %)))
    (map enrich-summoner-data-with-mmr)
    (filter #(not (mmr-is-nil? %)))
    (map (partial insert-summoner-data-mmr-step db))
@@ -76,15 +93,17 @@
 
 (defn get-and-start-summoner-to-mmr-job
   [db cn]
-  ; TODO update timed out jobs
+  (app-db/update-job-queue-for-timed-out db "summoner_data_job_queue")
   (let [job-id (app-db/get-job-from-job-queue db "summoner_data_job_queue")
         query-response (sql/query db ["SELECT *
                                        FROM summoner_data_job_queue
                                        WHERE id = ?" job-id])
         query-row (first query-response)]
+    (if (not (nil? job-id))
     (async/>!! cn {:job-id job-id
                    :region (get query-row :region)
-                   :summoner-json (get query-row :summoner_json)})))
+                   :summoner-json (get query-row :summoner_json)})
+    :errnojob)))
 
 (defn manual-create-summoner-job-by-summoner-name
   [db summoner-name region]

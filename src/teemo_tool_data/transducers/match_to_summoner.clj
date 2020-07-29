@@ -10,6 +10,7 @@
             [clojure.java.jdbc :as sql]
             [clojure.core.async :as async]
             [clojure.data.json :as json]
+            [slingshot.slingshot :refer [try+ throw+]]
             ))
 
 (defn get-account-info-from-match-step
@@ -18,11 +19,11 @@
   (as-> data v
     (get v :match-json)
     (json/read-str v)
-    (spy :trace (get v "participantIdentities"))
-    (spy :trace (map (fn [x] (get x "player")) v))
+    (get v "participantIdentities")
+    (map (fn [x] (get x "player")) v)
     ; TODO investigate riot api weirdness with playerDTO
-    (spy :trace (map (fn [x] (get x "accountId")) v))
-    (spy :trace (map (fn [x] (assoc data :account-id x)) v))))
+    (map (fn [x] (get x "accountId")) v)
+    (map (fn [x] (assoc data :account-id x)) v)))
 
 (defn get-summoner-data-for-account-step
   ; {:job-id ? :match-json ? :region ? :account-id ?}
@@ -31,10 +32,14 @@
   [{job-id :job-id
     region :region
     account-id :account-id}]
+  (try+
   (let [summoner-json (riot/get-summoner-json-from-account-id account-id region)]
     {:job-id job-id
      :region region
-     :summoner-json summoner-json}))
+     :summoner-json summoner-json})
+  (catch [:status 404] {:keys [request-time headers body]}
+    (warn "404 for get summoner data in match job " job-id)
+
 
 (defn insert-summoner-data-step
                                         ; {:job-id ? :region ? :summoner-json ?}
@@ -61,7 +66,7 @@
 
 (defn get-and-start-match-to-summoner-job
   [db cn]
-  ; TODO update timed out jobs
+  (app-db/update-job-queue-for-timed-out db "match_job_queue")
   (let [job-id (app-db/get-job-from-job-queue db "match_job_queue")
         query-response (sql/query db ["SELECT match_row_id
                                  FROM match_job_queue
@@ -71,9 +76,11 @@
                                        WHERE rowid = ?" match-row-id])
         match-row (first match-response)
         ]
-    (async/>!! cn {:job-id job-id
-                   :region (get match-row :region)
-                   :match-json (get match-row :match_json)})))
+    (if (not (nil? job-id))
+     (async/>!! cn {:job-id job-id
+                    :region (get match-row :region)
+                    :match-json (get match-row :match_json)})
+     :errnojob)))
 
 
 
