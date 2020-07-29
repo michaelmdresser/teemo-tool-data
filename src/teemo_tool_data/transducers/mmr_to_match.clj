@@ -97,13 +97,21 @@
     (trace "added match row id " match-row-id " to match queue")
     job-id))
 
+(defn either-mmr-under?
+  [db data]
+  (let [either-under (or (normal-mmr-under? 650 data)
+                         (ranked-mmr-under? 650 data))]
+    (when (not either-under)
+      (app-db/finish-job-from-queue db
+                                    "mmr_data_job_queue"
+                                    (get data :job-id)))
+    either-under))
 
 (defn make-mmr-to-match-transducer
   [db]
   ; {:job-id ? :mmr-json ? :summoner-json ? :region ?}
   (comp
-   (filter (fn [data] (or (normal-mmr-under? 650 data)
-                          (ranked-mmr-under? 650 data))))
+   (filter (partial either-mmr-under? db))
    ; mapcat turns the list of match id data into individual items in the transducer (1 summoner info -> many matches)
    ; https://stackoverflow.com/questions/59174994/how-to-create-multiple-outputs-using-a-transducer-on-a-pipeline
    (mapcat match-history-step)
