@@ -9,9 +9,9 @@
 
 (defn mark-done-step
   [db queue-table job-id]
-  (trace "finishing summoner job for job id " job-id)
+  (trace "finishing job on table " queue-table " for job id " job-id)
   (app-db/finish-job-from-queue db queue-table job-id)
-  (trace "finished summoner job for job id " job-id)
+  (debug "finished job on table " queue-table " for job id " job-id)
   job-id)
 
 ; dropall is a transducer that drops everything
