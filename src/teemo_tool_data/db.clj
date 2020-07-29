@@ -29,14 +29,12 @@
                      WHERE failures >= 3")
                     "FAILED"]))
 
+; we don't update status because it could have already been marked done by a child job due to the weird fan out behavior
 (defn fail-job
   [db queue-table job-id]
-  (sql/execute! db [(str "UPDATE " queue-table " SET status = ?,
-                                  timeout = NULL,
-                                  updated = CURRENT_TIMESTAMP,
-                                  failures = failures + 1
+  (sql/execute! db [(str "UPDATE " queue-table " SET updated = CURRENT_TIMESTAMP, failures = failures + 1
                      WHERE id = ?")
-                    "READY" job-id]))
+                    job-id]))
 
 ;(def db
 ;  {:classname   "org.sqlite.JDBC"
