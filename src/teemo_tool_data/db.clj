@@ -21,6 +21,23 @@
                            status = ?")
                     "READY" "INPROGRESS"]))
 
+(defn close-failed-jobs
+  [db queue-table]
+  (sql/execute! db [(str "UPDATE " queue-table " SET status = ?,
+                                  timeout = NULL,
+                                  updated = CURRENT_TIMESTAMP
+                     WHERE failures >= 3")
+                    "FAILED"]))
+
+(defn fail-job
+  [db queue-table job-id]
+  (sql/execute! db [(str "UPDATE " queue-table " SET status = ?,
+                                  timeout = NULL,
+                                  updated = CURRENT_TIMESTAMP,
+                                  failures = failures + 1
+                     WHERE id = ?")
+                    "READY" job-id]))
+
 ;(def db
 ;  {:classname   "org.sqlite.JDBC"
 ;   :subprotocol "sqlite"
@@ -157,7 +174,8 @@ summoner_json TEXT NOT NULL,
 region TEXT NOT NULL,
 status TEXT NOT NULL,
 updated DATETIME DEFAULT CURRENT_TIMESTAMP,
-timeout DATETIME DEFAULT NULL
+timeout DATETIME DEFAULT NULL,
+failures INTEGER NOT NULL DEFAULT 0
 )"
                       ))
 
@@ -185,6 +203,7 @@ mmr_id INTEGER NOT NULL,
 status TEXT NOT NULL,
 updated DATETIME DEFAULT CURRENT_TIMESTAMP,
 timeout DATETIME DEFAULT NULL,
+failures INTEGER NOT NULL DEFAULT 0,
 FOREIGN KEY (mmr_id) REFERENCES mmr(id)
 )"
                       ))
@@ -213,6 +232,7 @@ match_row_id INTEGER NOT NULL,
 status TEXT NOT NULL,
 updated DATETIME DEFAULT CURRENT_TIMESTAMP,
 timeout DATETIME DEFAULT NULL,
+failures INTEGER NOT NULL DEFAULT 0,
 FOREIGN KEY (match_row_id) REFERENCES matches(rowid)
 )"
                       ))

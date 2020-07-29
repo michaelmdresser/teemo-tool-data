@@ -36,10 +36,10 @@ will map that to a valid region (if one exists).
          :body
          )
         (catch [:status 404] {:keys [request-time headers body]}
-          (warn "404 looking for summoner mmr " region " " summoner-name)
+          (trace "404 looking for summoner mmr " region " " summoner-name)
           ; TODO decide if throw or nil is correct here
-          ;(throw+)
-          nil
+          (throw+)
+          ;nil
           )
         )
        )

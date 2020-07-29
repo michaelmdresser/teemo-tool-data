@@ -100,10 +100,25 @@ AND   timestamp > DATETIME(CURRENT_TIMESTAMP, '-7 days')" account-id])
                                        WHERE id = ?" job-id])
         query-row (first query-response)]
     (if (not (nil? job-id))
+      (do
     (async/>!! cn {:job-id job-id
                    :region (get query-row :region)
                    :summoner-json (get query-row :summoner_json)})
+    job-id)
     :errnojob)))
+
+(defn build-summoner-to-mmr-job-map
+  [db job-id]
+  (trace (get-env))
+  (let [query-response (sql/query db ["SELECT *
+                                       FROM summoner_data_job_queue
+                                       WHERE id = ?" job-id])
+        query-row (first query-response)]
+    {:job-id job-id
+     :region (get query-row :region)
+     :summoner-json (get query-row :summoner_json)}))
+
+
 
 (defn manual-create-summoner-job-by-summoner-name
   [db summoner-name region]

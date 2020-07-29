@@ -32,13 +32,10 @@
   [{job-id :job-id
     region :region
     account-id :account-id}]
-  (try+
   (let [summoner-json (riot/get-summoner-json-from-account-id account-id region)]
     {:job-id job-id
      :region region
-     :summoner-json summoner-json})
-  (catch [:status 404] {:keys [request-time headers body]}
-    (warn "404 for get summoner data in match job " job-id)
+     :summoner-json summoner-json}))
 
 
 (defn insert-summoner-data-step
@@ -77,12 +74,27 @@
         match-row (first match-response)
         ]
     (if (not (nil? job-id))
+      (do
      (async/>!! cn {:job-id job-id
                     :region (get match-row :region)
                     :match-json (get match-row :match_json)})
+     job-id)
      :errnojob)))
 
 
+(defn build-match-to-summoner-job-map
+  [db job-id]
+  (let [query-response (sql/query db ["SELECT match_row_id
+                                 FROM match_job_queue
+                                 WHERE id = ?" job-id])
+        match-row-id (get (first query-response) :match_row_id)
+        match-response (sql/query db ["SELECT * FROM matches
+                                       WHERE rowid = ?" match-row-id])
+        match-row (first match-response)
+        ]
+    {:job-id job-id
+     :region (get match-row :region)
+     :match-json (get match-row :match_json)}))
 
 
 (comment

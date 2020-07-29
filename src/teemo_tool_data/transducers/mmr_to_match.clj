@@ -139,11 +139,26 @@
                                      WHERE id = ?" mmr-id])
         mmr-row (first mmr-response)]
     (if (not (nil? job-id))
-    (async/>!! cn {:job-id job-id
-                   :region (get mmr-row :region)
-                   :summoner-json (get mmr-row :summoner_json)
-                   :mmr-json (get mmr-row :mmr_json)})
+      (do
+    job-id)
     :errnojob)))
+
+(defn build-mmr-to-match-job-map
+  [db job-id]
+  (let [query-response (sql/query db ["SELECT *
+                                       FROM mmr_data_job_queue
+                                       WHERE id = ?" job-id])
+        query-row (first query-response)
+        mmr-id (get query-row :mmr_id)
+        mmr-response (sql/query db ["SELECT *
+                                     FROM mmr
+                                     WHERE id = ?" mmr-id])
+        mmr-row (first mmr-response)]
+    {:job-id job-id
+     :region (get mmr-row :region)
+     :summoner-json (get mmr-row :summoner_json)
+     :mmr-json (get mmr-row :mmr_json)}))
+
 
 (defn manual-create-mmr-job-by-summoner-name
   [db summoner-name region]

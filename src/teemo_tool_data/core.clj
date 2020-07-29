@@ -77,42 +77,86 @@
 
 (defn main-loop-summ-to-mmr
   [db]
-  (let [cn (async/chan 1 (summ-to-mmr/make-summoner-mmr-transducer db))]
+  (let [transducer (summ-to-mmr/make-summoner-mmr-transducer db)
+        job-table "summoner_data_job_queue"]
     (while true
       (try+
-      (let [result (summ-to-mmr/get-and-start-summoner-to-mmr-job db cn)]
-        (when (= result :errnojob)
-          ; no jobs available, wait a bit for more
-          (Thread/sleep 4000)))
-      (catch org.sqlite.SQLiteException e
-        (error "exception " e)
-        (Thread/sleep 1000))))))
+       (app-db/update-job-queue-for-timed-out db job-table)
+       (app-db/close-failed-jobs db job-table)
+       (let [job-id (app-db/get-job-from-job-queue db job-table)]
+         (if (not (nil? job-id))
+           (try+
+            (transduce transducer
+                       conj
+                       [(summ-to-mmr/build-summoner-to-mmr-job-map db job-id)])
+            (catch [:status 403] {:keys [request-time headers body]}
+              (throw+))
+            (catch [:status 404] {:keys [request-time headers body]}
+              (error "404 during summ-to-mmr transduce, failing on table " job-table " id " job-id)
+              (app-db/fail-job db job-table job-id))
+            (catch Object e
+              (error "non-403 during summ-to-mmr transduce: " e " failing on table " job-table " id " job-id)
+              (throw+)))
+           (Thread/sleep 5000)))
+       (catch org.sqlite.SQLiteException e
+                                        ; probably a lock held
+         (error "sqlite exception " e)
+         (Thread/sleep 1000))))))
+
+
 
 (defn main-loop-mmr-to-match
   [db]
-  (let [cn (async/chan 1 (mmr-to-match/make-mmr-to-match-transducer db))]
+  (let [transducer (mmr-to-match/make-mmr-to-match-transducer db)
+        job-table "mmr_data_job_queue"]
     (while true
       (try+
-      (let [result (mmr-to-match/get-and-start-mmr-to-match-job db cn)]
-        (when (= result :errnojob)
-          ; no jobs available, wait a bit for more
-          (Thread/sleep 4000)))
+      (app-db/update-job-queue-for-timed-out db job-table)
+      (app-db/close-failed-jobs db job-table)
+      (let [job-id (app-db/get-job-from-job-queue db job-table)]
+        (if (not (nil? job-id))
+          (try+
+           (transduce transducer
+                      conj
+                      [(mmr-to-match/build-mmr-to-match-job-map db job-id)])
+           (catch [:status 403] {:keys [request-time headers body]}
+             (throw+))
+           (catch Object e
+             (error "non-403 during mmr-to-match transduce: " e " failing on table " job-table " id " job-id)
+             (throw+)
+             (app-db/fail-job db job-table job-id)))
+          (Thread/sleep 5000)))
       (catch org.sqlite.SQLiteException e
-        (error "exception " e)
+        ; probably a lock held
+        (error "sqlite exception " e)
         (Thread/sleep 1000))))))
 
 (defn main-loop-match-to-summ
   [db]
-  (let [cn (async/chan 1 (match-to-summ/make-match-to-summoner-transducer db))]
+  (let [transducer (match-to-summ/make-match-to-summoner-transducer db)
+        job-table "match_job_queue"]
     (while true
       (try+
-      (let [result (match-to-summ/get-and-start-match-to-summoner-job db cn)]
-        (when (= result :errnojob)
-          ; no jobs available, wait a bit for more
-          (Thread/sleep 4000)))
-      (catch org.sqlite.SQLiteException e
-        (error "exception " e)
-        (Thread/sleep 1000))))))
+      (app-db/update-job-queue-for-timed-out db job-table)
+      (app-db/close-failed-jobs db job-table)
+       (let [job-id (app-db/get-job-from-job-queue db job-table)]
+         (if (not (nil? job-id))
+           (try+
+            (transduce transducer
+                       conj
+                       [(match-to-summ/build-match-to-summoner-job-map db job-id)])
+            (catch [:status 403] {:keys [request-time headers body]}
+              (throw+))
+            (catch [:status 404] {:keys [request-time headers body]}
+              (error "404 during match-to-summ job, failing on table " job-table " id " job-id)
+               (app-db/fail-job db job-table job-id))
+            (catch Object e
+              (throw+)))
+           (Thread/sleep 5000)))
+       (catch org.sqlite.SQLiteException e
+                                        ; probably a lock held
+         (error "sqlite exception " e)
+         (Thread/sleep 1000))))))
 
 
 (defn -main
