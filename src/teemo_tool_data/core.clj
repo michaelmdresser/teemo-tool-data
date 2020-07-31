@@ -178,6 +178,9 @@
             (catch [:status 404] {:keys [request-time headers body]}
               (error "404 during match-to-summ job, failing on table " job-table " id " job-id)
                (app-db/fail-job db job-table job-id))
+            (catch [:status 400] {:keys [request-time headers body]}
+              (error "400 during match-to-summ job, failing on table " job-table " id " job-id)
+              (app-db/fail-job db job-table job-id))
             (catch [:status 503] {:keys [request-time headers body]}
               (error "503, waiting")
               ;(app-db/fail-job db job-table job-id)
