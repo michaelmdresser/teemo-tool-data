@@ -94,12 +94,20 @@
             (catch [:status 404] {:keys [request-time headers body]}
               (error "404 during summ-to-mmr transduce, failing on table " job-table " id " job-id)
               (app-db/fail-job db job-table job-id))
+            (catch [:status 503] {:keys [request-time headers body]}
+              (error "503, waiting")
+              ; (app-db/fail-job db job-table job-id)
+              (Thread/sleep 5000))
+            (catch [:status 504] {:keys [request-time headers body]}
+              (error "504, waiting")
+              ; (app-db/fail-job db job-table job-id)
+              (Thread/sleep 5000))
             (catch Object e
               (error "non-403 during summ-to-mmr transduce: " e " failing on table " job-table " id " job-id)
               (throw+)))
            (do
              (info "summ-to-mmr loop has no jobs, waiting")
-             (Thread/sleep 5000))))
+             (Thread/sleep 30000))))
        (catch org.sqlite.SQLiteException e
                                         ; probably a lock held
          (error "sqlite exception " e)
@@ -108,7 +116,6 @@
              (debug "SQLITE BUSY, waiting")
              (Thread/sleep 1000))
            (throw+)))))))
-
 
 
 (defn main-loop-mmr-to-match
@@ -127,13 +134,21 @@
                       [(mmr-to-match/build-mmr-to-match-job-map db job-id)])
            (catch [:status 403] {:keys [request-time headers body]}
              (throw+))
+           (catch [:status 503] {:keys [request-time headers body]}
+             (error "503, waiting")
+             ;(app-db/fail-job db job-table job-id)
+             (Thread/sleep 5000))
+           (catch [:status 504] {:keys [request-time headers body]}
+             (error "504, waiting")
+             ;(app-db/fail-job db job-table job-id)
+             (Thread/sleep 5000))
            (catch Object e
              (error "non-403 during mmr-to-match transduce: " e " failing on table " job-table " id " job-id)
              (throw+)
              (app-db/fail-job db job-table job-id)))
           (do
             (info "mmr-to-match loop has no jobs, waiting")
-            (Thread/sleep 5000))))
+            (Thread/sleep 30000))))
       (catch org.sqlite.SQLiteException e
                                         ; probably a lock held
         (error "sqlite exception " e)
@@ -163,11 +178,19 @@
             (catch [:status 404] {:keys [request-time headers body]}
               (error "404 during match-to-summ job, failing on table " job-table " id " job-id)
                (app-db/fail-job db job-table job-id))
+            (catch [:status 503] {:keys [request-time headers body]}
+              (error "503, waiting")
+              ;(app-db/fail-job db job-table job-id)
+              (Thread/sleep 5000))
+            (catch [:status 504] {:keys [request-time headers body]}
+              (error "504, waiting")
+              ;(app-db/fail-job db job-table job-id)
+              (Thread/sleep 5000))
             (catch Object e
               (throw+)))
            (do
              (info "match-to-summ loop has no jobs, waiting")
-             (Thread/sleep 5000))))
+             (Thread/sleep 30000))))
        (catch org.sqlite.SQLiteException e
                                         ; probably a lock held
          (error "sqlite exception " e)
