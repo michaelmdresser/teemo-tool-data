@@ -33,11 +33,16 @@
   (try+
    (client/get querypath args)
    (catch [:status 429] {:keys [request-time headers body]}
-     (debug "got 429 for call   querypath " querypath "  headers: " headers "    body: " body "waiting: " (get headers "Retry-After"))
-     (Thread/sleep (* 1000 (read-string (get headers "Retry-After"))))
+     (let [retry-after (get headers "Retry-After")]
+     (debug "got 429 for call   querypath " querypath "  headers: " headers "    body: " body "waiting: " retry-after)
+     (if (nil? retry-after)
+       (do
+         (warn "retry-after was nil, waiting 20s instead")
+         (Thread/sleep 20000))
+       (Thread/sleep (* 1000 (read-string retry-after))))
      (debug "trying again")
      (riot-get querypath args :backoffwait backoffwait :backoffcount (+ backoffcount 1))
-     )
+     ))
    (catch [:status 504] {:keys [request-time headers body]}
      (warn "got 504 for call:  querypath " querypath "    waiting " backoffwait "ms")
      (Thread/sleep backoffwait)
