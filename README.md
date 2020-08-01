@@ -1,29 +1,21 @@
 # teemo-tool-data
 
-FIXME: description
+Teemo Tool Data is a crawler for the Riot API, written in Clojure. Its objective is to record match data from the match histories of sufficiently low-skill League of Legends players. It uses [WhatIsMyMMR](https://na.whatismymmr.com/)'s API to discover a player's skill and keeps the ceiling at roughly sub-Silver. It uses a SQLite database as a job queue and a persistence layer for MMR and match data.
 
-## Installation
+## Architecture Diagram
 
-Download from http://example.com/FIXME.
+![](teemo-tool-datav2.png)
+
+Each sequence of data->step->data->... is implemented as a [transducer](https://clojure.org/reference/transducers)
 
 ## Usage
 
-FIXME: explanation
+`lein run` until I package it better.
 
-    $ java -jar teemo-tool-data-0.1.0-standalone.jar [args]
+## Future Changes
 
-## Options
-
-FIXME: listing of options this app accepts.
-
-## Examples
-
-...
+- Add option to only run one of the 3 pipelines at a time.
 
 ### Bugs
 
-...
-
-### Any Other Sections
-### That You Think
-### Might be Useful
+Most HTTP weirdness is handled but beware.
