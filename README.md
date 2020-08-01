@@ -15,6 +15,8 @@ Each sequence of data->step->data->... is implemented as a [transducer](https://
 ## Future Changes
 
 - Add option to only run one of the 3 pipelines at a time.
+- Add config files/args for database location
+- Add config files/args for MMR cap
 
 ### Bugs
 
