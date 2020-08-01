@@ -33,6 +33,8 @@
 ;(do-account-match-history-get-and-inserts db my-account-id "na1")
 
 (comment
+  ; these players were used to kickstart the crawler, observed
+  ; on the salty teemo stream
   (def on-stream-players ["eddymartinreal"
                           "crayziehorse"
                           "crimsonban"
@@ -75,134 +77,80 @@
 (match-to-summ/get-and-start-match-to-summoner-job db chan-match-to-summ)
 )
 
-(defn main-loop-summ-to-mmr
-  [db]
-  (let [transducer (summ-to-mmr/make-summoner-mmr-transducer db)
-        job-table "summoner_data_job_queue"]
-    (while true
-      (try+
-       (app-db/update-job-queue-for-timed-out db job-table)
-       (app-db/close-failed-jobs db job-table)
-       (let [job-id (app-db/get-job-from-job-queue db job-table)]
-         (if (not (nil? job-id))
-           (try+
-            (transduce transducer
-                       conj
-                       [(summ-to-mmr/build-summoner-to-mmr-job-map db job-id)])
+; each main loop is responsible for one part of the pipeline
+; the loops do job queue cleanup (updating timed out jobs and
+; closing jobs that have failed beyond the threshold) and then
+; get a job and run it through their respective transducer which
+; performs all data enrichment and database inserts. Failures are
+; handled on a case-by-case basis.
+
+(defn pipeline-main-loop
+  [db job-table make-transducer build-job-map]
+    (let [transducer (make-transducer db)]
+      (while true
+        (try+
+         (app-db/update-job-queue-for-timed-out db job-table)
+         (app-db/close-failed-jobs db job-table)
+         (let [job-id (app-db/get-job-from-job-queue db job-table)]
+           (if (not (nil? job-id))
+             (try+
+              (transduce transducer
+                         conj
+                         [(build-job-map db job-id)]) ; in a vector for transduce, it expects a collection
             (catch [:status 403] {:keys [request-time headers body]}
+              ; a 403 will generally be an API key issue
+              ; so exit immediately
               (throw+))
             (catch [:status 404] {:keys [request-time headers body]}
-              (error "404 during summ-to-mmr transduce, failing on table " job-table " id " job-id)
+              (warn "404 during " job-table " transduce, failing id " job-id)
               (app-db/fail-job db job-table job-id))
             (catch [:status 503] {:keys [request-time headers body]}
-              (error "503, waiting")
+              (warn "503, waiting")
               ; (app-db/fail-job db job-table job-id)
               (Thread/sleep 5000))
             (catch [:status 504] {:keys [request-time headers body]}
-              (error "504, waiting")
+              (warn "504, waiting")
               ; (app-db/fail-job db job-table job-id)
               (Thread/sleep 5000))
+            (catch [:status 400] {:keys [request-time headers body]}
+              ; 400s happen due to api quirks or something like that,
+              ; but they are error instead of warn because they aren't
+              ; expected
+              (error "400 during " job-table " transduce, failing id " job-id)
+              (app-db/fail-job db job-table job-id))
             (catch Object e
-              (error "non-403 during summ-to-mmr transduce: " e " failing on table " job-table " id " job-id)
+              (error "uncaught exception for transduce on table " job-table " id " job-id)
               (throw+)))
            (do
-             (info "summ-to-mmr loop has no jobs, waiting")
+             (info job-table " loop has no jobs, waiting")
              (Thread/sleep 30000))))
        (catch org.sqlite.SQLiteException e
-                                        ; probably a lock held
-         (error "sqlite exception " e)
          (if (clojure.string/includes? (.getMessage e) "SQLITE_BUSY")
            (do
              (debug "SQLITE BUSY, waiting")
              (Thread/sleep 1000))
            (throw+)))))))
 
+(defn main-loop-summ-to-mmr
+  [db]
+  (pipeline-main-loop db
+                      "summoner_data_job_queue"
+                      summ-to-mmr/make-summoner-mmr-transducer
+                      summ-to-mmr/build-summoner-to-mmr-job-map))
 
 (defn main-loop-mmr-to-match
   [db]
-  (let [transducer (mmr-to-match/make-mmr-to-match-transducer db)
-        job-table "mmr_data_job_queue"]
-    (while true
-      (try+
-      (app-db/update-job-queue-for-timed-out db job-table)
-      (app-db/close-failed-jobs db job-table)
-      (let [job-id (app-db/get-job-from-job-queue db job-table)]
-        (if (not (nil? job-id))
-          (try+
-           (transduce transducer
-                      conj
-                      [(mmr-to-match/build-mmr-to-match-job-map db job-id)])
-           (catch [:status 403] {:keys [request-time headers body]}
-             (throw+))
-           (catch [:status 503] {:keys [request-time headers body]}
-             (error "503, waiting")
-             ;(app-db/fail-job db job-table job-id)
-             (Thread/sleep 5000))
-           (catch [:status 504] {:keys [request-time headers body]}
-             (error "504, waiting")
-             ;(app-db/fail-job db job-table job-id)
-             (Thread/sleep 5000))
-           (catch Object e
-             (error "non-403 during mmr-to-match transduce: " e " failing on table " job-table " id " job-id)
-             (throw+)
-             (app-db/fail-job db job-table job-id)))
-          (do
-            (info "mmr-to-match loop has no jobs, waiting")
-            (Thread/sleep 30000))))
-      (catch org.sqlite.SQLiteException e
-                                        ; probably a lock held
-        (error "sqlite exception " e)
-        (if (clojure.string/includes? (.getMessage e) "SQLITE_BUSY")
-          (do
-            (debug "SQLITE BUSY, waiting")
-            (Thread/sleep 1000))
-          (throw+)))))))
-
+  (pipeline-main-loop db
+                      "mmr_data_job_queue"
+                      mmr-to-match/make-mmr-to-match-transducer
+                      mmr-to-match/build-mmr-to-match-job-map))
 
 (defn main-loop-match-to-summ
   [db]
-  (let [transducer (match-to-summ/make-match-to-summoner-transducer db)
-        job-table "match_job_queue"]
-    (while true
-      (try+
-      (app-db/update-job-queue-for-timed-out db job-table)
-      (app-db/close-failed-jobs db job-table)
-       (let [job-id (app-db/get-job-from-job-queue db job-table)]
-         (if (not (nil? job-id))
-           (try+
-            (transduce transducer
-                       conj
-                       [(match-to-summ/build-match-to-summoner-job-map db job-id)])
-            (catch [:status 403] {:keys [request-time headers body]}
-              (throw+))
-            (catch [:status 404] {:keys [request-time headers body]}
-              (error "404 during match-to-summ job, failing on table " job-table " id " job-id)
-               (app-db/fail-job db job-table job-id))
-            (catch [:status 400] {:keys [request-time headers body]}
-              (error "400 during match-to-summ job, failing on table " job-table " id " job-id)
-              (app-db/fail-job db job-table job-id))
-            (catch [:status 503] {:keys [request-time headers body]}
-              (error "503, waiting")
-              ;(app-db/fail-job db job-table job-id)
-              (Thread/sleep 5000))
-            (catch [:status 504] {:keys [request-time headers body]}
-              (error "504, waiting")
-              ;(app-db/fail-job db job-table job-id)
-              (Thread/sleep 5000))
-            (catch Object e
-              (throw+)))
-           (do
-             (info "match-to-summ loop has no jobs, waiting")
-             (Thread/sleep 30000))))
-       (catch org.sqlite.SQLiteException e
-                                        ; probably a lock held
-         (error "sqlite exception " e)
-         (if (clojure.string/includes? (.getMessage e) "SQLITE_BUSY")
-           (do
-             (debug "SQLITE BUSY, waiting")
-             (Thread/sleep 1000))
-           (throw+)))))))
-
+  (pipeline-main-loop db
+                      "match_job_queue"
+                      match-to-summ/make-match-to-summoner-transducer
+                      match-to-summ/build-match-to-summoner-job-map))
 
 (defn -main
   [& args]
